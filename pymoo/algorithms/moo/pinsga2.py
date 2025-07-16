@@ -20,6 +20,9 @@ from pymoo.util.nds.non_dominated_sorting import NonDominatedSorting
 
 from pymoo.algorithms.moo.nsga2 import binary_tournament
 from pymoo.algorithms.moo.nsga2 import RankAndCrowdingSurvival
+#from .gui_input import show_pairwise_decision
+from gui_input import show_pairwise_decision
+
 
 
 # =========================================================================================================
@@ -36,10 +39,11 @@ class AutomatedDM(ABC):
     def makeDecision(self, F):
         pass
     
-    def makePairwiseDecision(self, F):
+    def makePairwiseDecision(self, F, F2=None, X=None):
         
-        dm = lambda F: self.makeDecision(F)
-        ranks = self.get_pairwise_ranks_func(F, 1, dm=dm)
+        #dm = lambda F: self.makeDecision(F)
+        dm = lambda f_pair, x_pair: self.makeDecision(f_pair)
+        ranks = self.get_pairwise_ranks_func(F, 1, F2=F2, X=X, dm=dm)
         
         return ranks
         
@@ -135,14 +139,20 @@ class PINSGA2(GeneticAlgorithm):
 
 
     @staticmethod
-    def _get_pairwise_ranks(F, presi_signs, dm=None):
+    def _get_pairwise_ranks(F, presi_signs, F2=None, X = None,  dm=None):
 
         if not dm:
-                                  
-            dm = lambda F: input("\nWhich solution do you like best?\n" + \
+
+            F_full = F2                                 
+            '''dm = lambda F: input("\nWhich solution do you like best?\n" + \
                                     f"[a] {F[0]}\n" +  \
                                     f"[b] {F[1]}\n" + \
-                                     "[c] These solutions are equivalent.\n--> " )
+                                     "[c] These solutions are equivalent.\n--> " )'''
+            #dm = lambda F: show_pairwise_decision(F[0], F[1], F_full, X[0], X[1]
+            # dm = lambda F: show_pairwise_decision(F[0], F[1], F_full, X[np.where((F == F[0]).all(axis=1))[0][0]], X[np.where((F == F[1]).all(axis=1))[0][0]])
+            dm = lambda f_pair, x_pair: show_pairwise_decision(f_pair[0], f_pair[1], F2, x_pair[0], x_pair[1])
+
+
 
         # initialize empty ranking
         _ranks = []
@@ -161,8 +171,12 @@ class PINSGA2(GeneticAlgorithm):
                     # get pairwise preference from user
                     while True:
 
-                        points_to_compare = np.array( [f*presi_signs, F[ group[0] ]*presi_signs] )
-                        preference_raw = dm( points_to_compare )
+                        '''points_to_compare = np.array( [f*presi_signs, F[ group[0] ]*presi_signs] )
+                        preference_raw = dm( points_to_compare )'''
+                        f_pair = np.array([f * presi_signs, F[group[0]] * presi_signs])
+                        x_pair = np.array([X[i], X[group[0]]])
+                        preference_raw = dm(f_pair, x_pair)
+
 
                         preference = preference_raw.strip().lower()
 
@@ -244,6 +258,8 @@ class PINSGA2(GeneticAlgorithm):
         self.fronts = rank
 
         F = F[rank == 0]
+        X = self.pop.get("X")  # All genomes
+        X = X[rank == 0] # Only non-dominated genomes
 
         if self.historical_F is not None:
             self.historical_F = np.vstack((self.historical_F, F)) 
@@ -259,10 +275,18 @@ class PINSGA2(GeneticAlgorithm):
         eta_F_indices = select_points_with_maximum_distance(F, to_find)
 
         self.eta_F = F[eta_F_indices]
-        self.eta_F = self.eta_F[self.eta_F[:,0].argsort()]
+        self.eta_X = X[eta_F_indices] 
+        #self.eta_F = self.eta_F[self.eta_F[:,0].argsort()]
+        sort_idx = self.eta_F[:, 0].argsort()
+        self.eta_F = self.eta_F[sort_idx]
+        self.eta_X = self.eta_X[sort_idx]
+
 
         # Remove duplicate rows
-        self.eta_F = np.unique(self.eta_F, axis=0)
+        #self.eta_F = np.unique(self.eta_F, axis=0)
+        _, unique_idx = np.unique(self.eta_F, axis=0, return_index=True)
+        self.eta_F = self.eta_F[unique_idx]
+        self.eta_X = self.eta_X[unique_idx]
 
         # A frozen view of the optimization each tau generations 
         self.paused_F = F
@@ -288,7 +312,7 @@ class PINSGA2(GeneticAlgorithm):
                 if self.ranking_type == "absolute": 
                     dm_ranks = PINSGA2._get_ranks(self.eta_F, self.presi_signs)
                 elif self.ranking_type == "pairwise": 
-                    dm_ranks = PINSGA2._get_pairwise_ranks(self.eta_F, self.presi_signs)
+                    dm_ranks = PINSGA2._get_pairwise_ranks(self.eta_F, self.presi_signs, F2=F, X = self.eta_X)
                     PINSGA2._present_ranks(self.eta_F, dm_ranks, self.presi_signs) 
                 else: 
                     raise ValueError("Invalid ranking type [%s] given." % self.ranking_type)
@@ -298,7 +322,7 @@ class PINSGA2(GeneticAlgorithm):
                 if self.ranking_type == "absolute": 
                     dm_ranks = self.automated_dm.makeDecision(self.eta_F)
                 elif self.ranking_type == "pairwise": 
-                    dm_ranks = self.automated_dm.makePairwiseDecision(self.eta_F)
+                    dm_ranks = self.automated_dm.makePairwiseDecision(self.eta_F, F2=F, X=self.eta_X)
                 else: 
                     raise ValueError("Invalid ranking type [%s] given." % self.ranking_type)
 
